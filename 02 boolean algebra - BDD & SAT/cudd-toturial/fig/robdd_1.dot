@@ -1,0 +1,18 @@
+digraph G {
+labelloc="t"
+label="(x1 & x2 | !x1 & !x2) | x3"
+0 [label="Zero"]
+1 [label="One"]
+3 [label="x2"]
+3 -> 1 [style=dotted]
+3 -> 2
+5 [label="x1"]
+5 -> 3 [style=dotted]
+5 -> 4
+4 [label="x2"]
+4 -> 2 [style=dotted]
+4 -> 1
+2 [label="x3"]
+2 -> 0 [style=dotted]
+2 -> 1
+}

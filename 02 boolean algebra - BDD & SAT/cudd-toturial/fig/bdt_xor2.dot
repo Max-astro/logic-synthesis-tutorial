@@ -1,0 +1,17 @@
+digraph G {
+labelloc="t"
+label="x1 xor x2"
+1 [label="x1"]
+1 -> 2 [style=dotted]
+2 [label="x2"]
+2 -> 3 [style=dotted]
+3 [label="0"]
+2 -> 4
+4 [label="1"]
+1 -> 5
+5 [label="x2"]
+5 -> 6 [style=dotted]
+6 [label="1"]
+5 -> 7
+7 [label="0"]
+}
