@@ -1,0 +1,1619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logic Synthesis: Netlist Optimization Algorithms</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Tailwind Config for Custom Colors -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        eda: {
+                            50: '#f8fafc',
+                            100: '#f1f5f9',
+                            200: '#e2e8f0',
+                            300: '#cbd5e1',
+                            400: '#94a3b8',
+                            500: '#64748b',
+                            600: '#475569',
+                            700: '#334155',
+                            800: '#1e293b',
+                            900: '#0f172a',
+                            dark: '#0f172a',
+                            primary: '#2563eb',
+                            accent: '#059669',
+                            nvidia: '#76b900',
+                        },
+                        tech: {
+                            light: '#e0e7ff',
+                            DEFAULT: '#4f46e5', // Indigo 600
+                            dark: '#3730a3',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            height: 350px;
+        }
+        .chart-container.h-32 {
+            height: 8rem;
+        }
+        .flow-arrow::after {
+            content: '→';
+            font-size: 1.5rem;
+            color: #94a3b8;
+            margin: 0 0.5rem;
+        }
+        .flow-arrow:last-child::after {
+            content: '';
+        }
+        .interactive-card {
+            transition: all 0.2s ease-in-out;
+        }
+        .interactive-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .selected-card {
+            border-color: #4f46e5;
+            background-color: #e0e7ff;
+        }
+        /* Hide scrollbar for clean UI */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .flow-diagram-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 12px 24px -18px rgba(15, 23, 42, 0.35);
+        }
+        #flowDiagramCanvas {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        .node-transition {
+            transition: all 0.3s ease;
+        }
+        .datapath-chart {
+            height: 300px;
+        }
+        .nvidia-gradient {
+            background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%);
+        }
+    </style>
+    <!-- Chosen Palette: Slate & Indigo (Academic, Professional, High Contrast) -->
+    <!-- Application Structure Plan: 
+         1. Header: Context setting (Post-Mapping Optimization).
+         2. "The Flow" Overview: Visualizing the sequence of operations.
+         3. Algorithm Explorer: A 2-column layout. Left side lists specific algorithms (Resynthesis, Buffering, etc.). 
+            Right side updates dynamically with details and visual concepts.
+         4. Strategy Deep Dive: Comparing Traditional Greedy vs. Lagrangian Relaxation.
+         5. Interactive Lab: A specific Chart.js simulation for Lagrangian Relaxation to demonstrate the "Lambda" concept visually.
+         Rationale: This structure moves from general flow to specific tools, then to the underlying mathematical engines, ending with a hands-on simulation suitable for PhD level understanding.
+    -->
+    <!-- Visualization & Content Choices:
+         - Flowchart: HTML Flexbox with unicode arrows. Simple, accessible.
+         - Algorithm Details: Dynamic HTML injection based on selection. No SVG icons, used CSS shapes/Unicode.
+         - Charts: Chart.js for the Gate Sizing Trade-off (Scatter) and Lagrangian Cost Function (Line + Scatter). 
+         - Justification: Chart.js handles the mathematical curves required to explain the sizing problem perfectly without raster images or complex SVG manipulation.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+</head>
+<body class="flex flex-col min-h-screen">
+
+    <!-- Navigation / Header -->
+    <header class="bg-white border-b border-eda-200 shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-tech rounded-lg flex items-center justify-center text-white font-bold text-lg">Logic</div>
+                <h1 class="text-xl font-bold tracking-tight text-eda-900">Synthesis Optimization Flow <span class="text-sm font-normal text-eda-500 ml-2">Post-Mapping Algorithms</span></h1>
+            </div>
+            <nav class="hidden md:flex space-x-8">
+                <button onclick="scrollToSection('Synflow')" class="text-eda-600 hover:text-tech font-medium transition-colors">Synthsis flow</button>
+                <button onclick="scrollToSection('overview')" class="text-eda-600 hover:text-tech font-medium transition-colors">Overview</button>
+                <button onclick="scrollToSection('algorithms')" class="text-eda-600 hover:text-tech font-medium transition-colors">Algorithms</button>
+                <button onclick="scrollToSection('engine')" class="text-eda-600 hover:text-tech font-medium transition-colors">Optimization Engine</button>
+                <!-- <button onclick="scrollToSection('lab')" class="bg-tech text-white px-4 py-2 rounded-md hover:bg-tech-dark transition-colors font-medium">Interactive Lab</button> -->
+            </nav>
+        </div>
+    </header>
+
+    <main class="flex-grow">
+        <!-- New Flow Diagram -->
+        <section id="flow-diagram" class="py-10 bg-white border-b border-eda-200">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <h2 class="text-3xl font-extrabold text-eda-900 mb-4">Synthesis Flow Overview</h2>
+                <div class="flow-diagram-card">
+                    <canvas id="flowDiagramCanvas" aria-label="Logic synthesis flow diagram" role="img"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION: Datapath Optimization -->
+        <section id="datapath" class="py-12 bg-eda-50 border-b border-eda-200">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="mb-6">
+                    <h2 class="text-3xl font-extrabold text-eda-900">High-Level Design Optimization: Operator Selection</h2>
+                    <p class="mt-2 text-eda-600">Operator selection trade-offs for critical vs. non-critical paths.</p>
+                </div>
+
+                <!-- Header Section -->
+                <!-- <div class="bg-white border border-stone-200 rounded-xl p-5 shadow-sm mb-8">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div>
+                            <h3 class="text-xl font-bold text-stone-800 tracking-tight">High-Level Design Optimization: Operator Selection</h3>
+                            <p class="text-sm text-stone-500 mt-1">Interactive synthesis trade-off demo</p>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-xs font-medium text-stone-400 uppercase tracking-wider">Current Status</div>
+                            <div id="header-status" class="text-sm font-bold text-amber-600">Analyzing...</div>
+                        </div>
+                    </div>
+                </div> -->
+
+                <!-- Intro / Context Section -->
+                <div class="mb-8">
+                    <div class="bg-white rounded-xl shadow-sm border border-stone-100 p-6 md:p-8">
+                        <div class="bg-eda-50 border-l-4 border-tech p-4 rounded-r-md">
+                            <h3 class="text-lg font-semibold text-stone-800 mb-4 flex items-center">
+                                <span class="bg-amber-100 text-amber-800 text-xs font-bold px-2 py-1 rounded mr-2">Background</span>
+                                What is operator selection?
+                            </h3>
+                            <p class="text-stone-600 leading-relaxed mb-4">
+                                During synthesis, adders and multipliers from HDL code are mapped into concrete logic gate structures. Different architectures trade off <strong>timing (speed)</strong> and <strong>area</strong>.
+                            </p>
+                            <p class="text-stone-600 leading-relaxed">
+                                The goal is to balance trade-offs: use faster but larger structures (such as Kogge-Stone) on the <strong>critical path</strong> that determines overall speed, and use smaller, slower structures (such as Ripple Carry) on <strong>non-critical paths</strong> to save area and power.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Interactive Area -->
+                <div class="flex-grow w-full grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    <!-- Left Column: Circuit Visualization -->
+                    <div class="lg:col-span-7 space-y-6">
+                        <div class="bg-white rounded-xl shadow-lg border border-stone-200 overflow-hidden">
+                            <div class="bg-stone-50 px-6 py-4 border-b border-stone-200 flex justify-between items-center">
+                                <h4 class="font-bold text-stone-700">Datapath Visualization</h4>
+                                <div class="text-xs text-stone-500">Click an adder node to switch its structure</div>
+                            </div>
+                            
+                            <div class="p-6 overflow-x-auto">
+                                <!-- Legend -->
+                                <div class="flex flex-wrap gap-4 mb-8 text-xs justify-center sm:justify-start">
+                                    <div class="flex items-center"><div class="w-3 h-3 bg-blue-100 border border-blue-500 rounded mr-2"></div>Ripple (slow / small)</div>
+                                    <div class="flex items-center"><div class="w-3 h-3 bg-teal-100 border border-teal-500 rounded mr-2"></div>Brent-Kung (balanced)</div>
+                                    <div class="flex items-center"><div class="w-3 h-3 bg-rose-100 border border-rose-500 rounded mr-2"></div>Kogge-Stone (fast / large)</div>
+                                    <div class="flex items-center ml-4"><div class="w-6 h-1 bg-red-500 rounded mr-2"></div>Critical Path</div>
+                                </div>
+
+                                <!-- Circuit Paths Container -->
+                                <div id="circuit-container" class="space-y-12 min-w-[600px]">
+                                    <!-- Rendered by JS -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Controls / Explainer for Selected Node -->
+                        <div id="node-detail-panel" class="bg-stone-800 text-white rounded-xl shadow-md p-6 hidden transition-all">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <h4 class="text-lg font-bold text-amber-400 mb-1" id="detail-title">Adder #X</h4>
+                                    <p class="text-stone-400 text-sm mb-4" id="detail-desc">Located on Path 1</p>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-2xl font-mono font-bold" id="detail-delay">10ns</div>
+                                    <div class="text-xs text-stone-400">Delay</div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-3 gap-4 mt-4">
+                                <button onclick="updateSelectedNode('Ripple')" class="px-3 py-2 rounded bg-stone-700 hover:bg-stone-600 text-sm border border-stone-600 transition-colors flex flex-col items-center">
+                                    <span class="font-bold mb-1">Ripple</span>
+                                    <span class="text-xs text-stone-400">Area: 10</span>
+                                </button>
+                                <button onclick="updateSelectedNode('BK')" class="px-3 py-2 rounded bg-stone-700 hover:bg-stone-600 text-sm border border-stone-600 transition-colors flex flex-col items-center">
+                                    <span class="font-bold mb-1">Brent-Kung</span>
+                                    <span class="text-xs text-stone-400">Area: 20</span>
+                                </button>
+                                <button onclick="updateSelectedNode('KS')" class="px-3 py-2 rounded bg-stone-700 hover:bg-stone-600 text-sm border border-stone-600 transition-colors flex flex-col items-center">
+                                    <span class="font-bold mb-1">Kogge-Stone</span>
+                                    <span class="text-xs text-stone-400">Area: 30</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Analytics -->
+                    <div class="lg:col-span-5 space-y-6">
+                        <!-- Summary Stats Cards -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-white p-5 rounded-xl shadow-sm border border-stone-100">
+                                <div class="text-stone-500 text-xs font-semibold uppercase tracking-wider mb-1">Max Delay</div>
+                                <div class="flex items-baseline">
+                                    <span id="stat-max-delay" class="text-3xl font-bold text-stone-800">--</span>
+                                    <span class="ml-1 text-sm text-stone-500">ns</span>
+                                </div>
+                                <div class="text-xs text-red-500 mt-2 font-medium" id="stat-critical-path-name">Path --</div>
+                            </div>
+                            <div class="bg-white p-5 rounded-xl shadow-sm border border-stone-100">
+                                <div class="text-stone-500 text-xs font-semibold uppercase tracking-wider mb-1">Total Area</div>
+                                <div class="flex items-baseline">
+                                    <span id="stat-total-area" class="text-3xl font-bold text-stone-800">--</span>
+                                    <span class="ml-1 text-sm text-stone-500">units</span>
+                                </div>
+                                <div class="text-xs text-stone-400 mt-2" id="stat-area-note">Lower is better</div>
+                            </div>
+                        </div>
+
+                        <!-- Charts -->
+                        <div class="bg-white rounded-xl shadow-sm border border-stone-100 p-5">
+                            <h4 class="font-bold text-stone-700 mb-4 text-sm">Path Delay Analysis</h4>
+                            <div class="chart-container datapath-chart">
+                                <canvas id="delayChart"></canvas>
+                            </div>
+                            <p class="text-xs text-stone-500 mt-4 text-center">
+                                Tip: meeting timing usually means optimizing the highest bar (the critical path).
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- SECTION 1: Overview & Context -->
+        <section id="overview" class="py-12 bg-white">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="lg:grid lg:grid-cols-12 lg:gap-8 items-center">
+                    <div class="lg:col-span-5">
+                        <h2 class="text-3xl font-extrabold text-eda-900 mb-4">Post-Mapping Netlist Optimization</h2>
+                        <p class="text-lg text-eda-600 mb-6">
+                            After technology mapping, the netlist consists of standard cells. Commercial tools (like Design Compiler or Genus) iterate on this netlist to improve PPA (Power, Performance, Area).
+                        </p>
+                        <div class="bg-eda-50 border-l-4 border-tech p-4 rounded-r-md">
+                            <h3 class="font-bold text-eda-800">Key Context: Zero-Wire-Load Model</h3>
+                            <p class="text-eda-600 text-sm mt-1">
+                                Optimization relies on estimating wire loads. At this stage, tools often use a zero-wire-load model, calculating cell delay based on the sum of the capacitance of all the fanout pins and the transition of the input pins. (Input Transition / Output Load).
+                            </p>
+                        </div>
+                    </div>
+                    <div class="lg:col-span-7 mt-8 lg:mt-0">
+                        <!-- CSS/HTML Flowchart -->
+                        <div class="bg-eda-50 rounded-xl p-6 border border-eda-200">
+                            <h3 class="text-sm font-semibold text-eda-400 uppercase tracking-wider mb-4">The Optimization Pipeline</h3>
+                            <div class="flex flex-wrap gap-4 justify-center items-center">
+                                <div class="flow-step flex flex-col items-center p-3 bg-white rounded shadow-sm border border-eda-200 w-32">
+                                    <span class="text-2xl mb-1">📝</span>
+                                    <span class="font-bold text-sm">Tech Map</span>
+                                </div>
+                                <div class="text-eda-400 text-2xl">→</div>
+                                <div class="flow-step flex flex-col items-center p-3 bg-indigo-50 rounded shadow-md border-2 border-indigo-200 w-40 relative">
+                                    <div class="absolute -top-3 bg-indigo-600 text-white text-xs px-2 py-0.5 rounded-full">Focus Here</div>
+                                    <span class="text-2xl mb-1">⚙️</span>
+                                    <span class="font-bold text-sm text-center">Netlist Optimization</span>
+                                    <span class="text-xs text-eda-500 text-center">(Resynth, Size, Buffer...)</span>
+                                </div>
+                                <div class="text-eda-400 text-2xl">→</div>
+                                <div class="flow-step flex flex-col items-center p-3 bg-white rounded shadow-sm border border-eda-200 w-32">
+                                    <span class="text-2xl mb-1">📍</span>
+                                    <span class="font-bold text-sm">Placement</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 2: POST-MAPPING ALGORITHMS -->
+        <section id="algorithms" class="py-12 bg-eda-50 border-y border-eda-200">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="mb-8">
+                    <h2 class="text-xl font-bold text-eda-dark border-l-4 border-eda-accent pl-3">Post-Mapping Optimization Algorithms</h2>
+                    <p class="mt-2 text-gray-600 max-w-3xl">
+                        Once the netlist is mapped to standard cells, the tool uses a Zero-Wire-Load model to calculate PPA (Power, Performance, Area). 
+                        The following algorithms are applied iteratively, similar to compiler passes, to optimize the design.
+                    </p>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <!-- Navigation / Sidebar for Algorithms -->
+                    <div class="lg:col-span-3 space-y-2">
+                        <button onclick="selectAlgo('resynthesis')" class="algo-btn w-full text-left px-4 py-3 rounded-lg font-medium transition-colors bg-white hover:bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-eda-primary" data-algo="resynthesis">Resynthesis</button>
+                        <button onclick="selectAlgo('rule_based')" class="algo-btn w-full text-left px-4 py-3 rounded-lg font-medium transition-colors bg-white hover:bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-eda-primary" data-algo="rule_based">Rule-based Decomposition</button>
+                        <button onclick="selectAlgo('pin_swap')" class="algo-btn w-full text-left px-4 py-3 rounded-lg font-medium transition-colors bg-white hover:bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-eda-primary" data-algo="pin_swap">Pin Swap</button>
+                        <button onclick="selectAlgo('buffering')" class="algo-btn w-full text-left px-4 py-3 rounded-lg font-medium transition-colors bg-white hover:bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-eda-primary" data-algo="buffering">Buffering</button>
+                        <button onclick="selectAlgo('gate_sizing')" class="algo-btn w-full text-left px-4 py-3 rounded-lg font-medium transition-colors bg-white hover:bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-eda-primary" data-algo="gate_sizing">Gate Sizing</button>
+                    </div>
+
+                    <!-- Content Area -->
+                    <div class="lg:col-span-9 bg-white rounded-xl shadow-sm border border-gray-200 p-6 min-h-[500px] flex flex-col">
+                        <div id="algo-content" class="flex-grow">
+                            <!-- Default Content -->
+                            <div class="h-full flex flex-col items-center justify-center text-gray-400">
+                                <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                                <p class="text-lg font-medium">Select an algorithm to explore details and visualizations.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 3: METHODOLOGIES -->
+        <section id="engine" class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-xl shadow-lg p-8 mx-4 sm:mx-6 lg:mx-8 my-8">
+            <div class="mb-8">
+                <h2 class="text-xl font-bold text-white border-l-4 border-yellow-400 pl-3">Evolution of Optimization Methodologies</h2>
+                <p class="mt-2 text-gray-300">From heuristic loops to differentiable optimization.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Traditional -->
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <h3 class="text-lg font-bold text-red-300 mb-4 flex items-center">
+                        <span class="bg-red-900/50 p-1 rounded mr-2">Traditional</span>
+                        Try-Eval-Commit
+                    </h3>
+                    <ul class="space-y-3 text-gray-300 text-sm list-disc pl-5">
+                        <li><strong>Heuristic Driven:</strong> Selects a cell/cone based on rules.</li>
+                        <li><strong>Greedy approach:</strong> Apply transform → Calc PPA → Commit if benefit > threshold.</li>
+                        <li><strong>Limitations:</strong> Can get stuck in local optima. High runtime due to incremental timing updates.</li>
+                    </ul>
+                    <div class="mt-6 p-4 bg-black/30 rounded border border-gray-600">
+                        <div class="text-xs text-gray-400 mb-2 font-mono">Loop Visualization:</div>
+                        <div class="flex items-center justify-between text-xs font-mono text-center">
+                            <div class="w-1/4 p-2 bg-gray-700 rounded">Identify<br>Candidate</div>
+                            <div class="text-gray-500">→</div>
+                            <div class="w-1/4 p-2 bg-gray-700 rounded">Apply<br>Opt</div>
+                            <div class="text-gray-500">→</div>
+                            <div class="w-1/4 p-2 bg-gray-700 rounded border border-red-500/50">Eval PPA<br>(Undo/Keep)</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modern -->
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 relative overflow-hidden">
+                    <div class="absolute top-0 right-0 bg-green-500 text-black text-xs font-bold px-2 py-1 rounded-bl">SOTA</div>
+                    <h3 class="text-lg font-bold text-green-300 mb-4 flex items-center">
+                        <span class="bg-green-900/50 p-1 rounded mr-2">Recently</span>
+                        Differentiable & LR
+                    </h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="text-sm font-bold text-white mb-1">Lagrangian Relaxation (LR) Based</h4>
+                            <p class="text-xs text-gray-400">Autonomous application of transforms inside an LR framework. Fuses buffering, sizing, and swapping to avoid local optima, though convergence can be unstable.</p>
+                        </div>
+                        <div>
+                            <h4 class="text-sm font-bold text-white mb-1">Differentiable Optimization (SOTA)</h4>
+                            <p class="text-xs text-gray-400">Transforming discrete problems (sizing, placement) into continuous, differentiable functions. Enables gradient-descent style optimization. Highly parallelizable on GPUs.</p>
+                        </div>
+                    </div>
+
+                    <div class="mt-6">
+                        <!-- Chart container for Continuous vs Discrete -->
+                        <div class="chart-container h-32">
+                            <canvas id="modernChart"></canvas>
+                        </div>
+                        <p class="text-center text-[10px] text-gray-500 mt-1">Concept: Smoothing the discrete search space</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 4: INDUSTRY TRENDS (NEW) -->
+        <section id="trends-section" class="nvidia-gradient text-white rounded-xl shadow-lg p-8 border border-green-900 relative overflow-hidden mx-4 sm:mx-6 lg:mx-8 my-8">
+            <div class="absolute top-0 right-0 w-64 h-64 bg-eda-nvidia opacity-10 rounded-full blur-3xl transform translate-x-1/2 -translate-y-1/2"></div>
+            
+            <div class="relative z-10 mb-8 flex flex-col md:flex-row justify-between items-start md:items-center">
+                <div>
+                    <h2 class="text-2xl font-bold text-white border-l-4 border-eda-nvidia pl-3">Industry Focus & Academic Frontiers</h2>
+                    <p class="mt-2 text-gray-300 text-sm">Why Netlist Optimization Matters: Insights from <span class="text-eda-nvidia font-bold">NVIDIA</span> Sponsored ICCAD Contests.</p>
+                </div>
+                <div class="mt-4 md:mt-0 text-right">
+                    <span class="inline-block bg-white/10 backdrop-blur px-3 py-1 rounded-full text-xs text-eda-nvidia border border-eda-nvidia/30 font-mono">GPU Accelerated EDA</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8 relative z-10">
+                <div class="bg-white/5 rounded-lg p-5 border border-white/10 hover:border-eda-nvidia/50 transition duration-300 group">
+                    <div class="flex justify-between items-start mb-3">
+                        <h3 class="text-lg font-bold text-white group-hover:text-eda-nvidia transition-colors">ICCAD 2024 Contest</h3>
+                        <span class="text-xs bg-eda-nvidia text-black px-2 py-0.5 rounded font-bold">Problem C</span>
+                    </div>
+                    <h4 class="text-sm font-semibold text-gray-200 mb-2">Scalable Logic Gate Sizing Using ML Techniques and GPU Acceleration</h4>
+                    <p class="text-xs text-gray-400 mb-4">
+                        Sponsored by NVIDIA Research & ASU. Focused on overcoming the limitations of traditional discrete sizing by leveraging Machine Learning and the massive parallelism of GPUs to handle millions of gates.
+                    </p>
+                </div>
+
+                <div class="bg-white/5 rounded-lg p-5 border border-white/10 hover:border-eda-nvidia/50 transition duration-300 group">
+                    <div class="flex justify-between items-start mb-3">
+                        <h3 class="text-lg font-bold text-white group-hover:text-eda-nvidia transition-colors">ICCAD 2025 Contest</h3>
+                        <span class="text-xs bg-eda-nvidia text-black px-2 py-0.5 rounded font-bold">Problem C</span>
+                    </div>
+                    <h4 class="text-sm font-semibold text-gray-200 mb-2">Incremental Placement Optimization Beyond Detailed Placement</h4>
+                    <p class="text-xs text-gray-400 mb-4">
+                        Sponsored by NVIDIA Research. Raised the bar by demanding <span class="text-white italic">Simultaneous</span> Gate Sizing, Buffering, and Cell Relocation. The goal is to escape local optima that heuristic passes often get trapped in.
+                    </p>
+                </div>
+            </div>
+
+            <div class="bg-black/30 rounded-lg p-6 border-t border-white/10 relative z-10">
+                <h3 class="text-md font-bold text-gray-200 mb-4 flex items-center">
+                    <svg class="w-4 h-4 mr-2 text-eda-nvidia" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                    Pioneering Research Papers (SOTA)
+                </h3>
+                <div class="space-y-3">
+                    <a href="https://dl.acm.org/doi/10.1145/3489517.3530519" target="_blank" class="block p-3 rounded hover:bg-white/5 transition flex items-center justify-between group">
+                        <div>
+                            <div class="text-sm font-semibold text-eda-nvidia group-hover:underline">Differentiable-Timing-Driven Global Placement</div>
+                            <div class="text-xs text-gray-500">Z Guo, Y Lin • DAC 2022</div>
+                        </div>
+                        <span class="text-gray-500 text-xs">↗</span>
+                    </a>
+                    <a href="https://guozz.cn/publication/fusionsizericcad-24/" target="_blank" class="block p-3 rounded hover:bg-white/5 transition flex items-center justify-between group">
+                        <div>
+                            <div class="text-sm font-semibold text-eda-nvidia group-hover:underline">Fusion of Global Placement and Gate Sizing with Differentiable Optimization</div>
+                            <div class="text-xs text-gray-500">Y Du, Z Guo, Y Lin, et al. • ICCAD 2024</div>
+                        </div>
+                        <span class="text-gray-500 text-xs">↗</span>
+                    </a>
+                    <a href="https://yufandu.com/uploads/DiffPhyOpt_iccad25.pdf" target="_blank" class="block p-3 rounded hover:bg-white/5 transition flex items-center justify-between group">
+                        <div>
+                            <div class="text-sm font-semibold text-eda-nvidia group-hover:underline">Differentiable Physical Optimization</div>
+                            <div class="text-xs text-gray-500">Y Du, Z Guo, R Wang, Y Lin • ICCAD 2025</div>
+                        </div>
+                        <span class="text-gray-500 text-xs">↗</span>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 4: Interactive Lab -->
+        <!-- <section id="lab" class="py-12 bg-eda-900 text-white">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="mb-8 flex flex-col md:flex-row justify-between items-start md:items-end">
+                    <div>
+                        <span class="inline-block px-3 py-1 rounded-full bg-indigo-500 text-xs font-bold uppercase tracking-wide mb-2">Interactive Simulation</span>
+                        <h2 class="text-3xl font-extrabold text-white">Lagrangian Relaxation Lab</h2>
+                        <p class="mt-2 text-eda-300 max-w-2xl">
+                            Visualize how the Lagrange Multiplier ($\lambda$) controls the trade-off between Area and Delay for a single gate.
+                            Increasing $\lambda$ means "Time is more expensive," forcing the algorithm to choose larger, faster cells.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="grid lg:grid-cols-3 gap-8">
+                    <div class="bg-eda-800 p-6 rounded-xl border border-eda-700">
+                        <label class="block text-sm font-medium text-eda-300 mb-2">Lagrange Multiplier ($\lambda$)</label>
+                        <div class="flex items-center space-x-4 mb-6">
+                            <span class="text-xs text-eda-400">Cheap Timing</span>
+                            <input type="range" id="lambdaSlider" min="0.1" max="10" step="0.1" value="1" class="w-full h-2 bg-eda-600 rounded-lg appearance-none cursor-pointer accent-indigo-500">
+                            <span class="text-xs text-eda-400">Critical Path</span>
+                        </div>
+                        <div class="text-center mb-6">
+                            <span class="text-3xl font-mono font-bold text-indigo-400" id="lambdaValue">1.0</span>
+                            <span class="block text-xs text-eda-400 mt-1">Current Lambda Value</span>
+                        </div>
+
+                        <div class="border-t border-eda-700 pt-4">
+                            <h4 class="font-bold text-white mb-2">Selected Design Point:</h4>
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-eda-400 text-sm">Delay:</span>
+                                <span class="text-white font-mono" id="currentDelay">0.00</span>
+                            </div>
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-eda-400 text-sm">Area:</span>
+                                <span class="text-white font-mono" id="currentArea">0.00</span>
+                            </div>
+                            <div class="flex justify-between items-center mt-3 pt-3 border-t border-eda-700">
+                                <span class="text-indigo-300 text-sm font-bold">Total Cost ($A + \lambda D$):</span>
+                                <span class="text-indigo-300 font-mono font-bold" id="currentCost">0.00</span>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-6 bg-eda-900 p-3 rounded text-xs text-eda-400 italic">
+                            "The algorithm picks the cell size where the slope of the curve equals -$\lambda$."
+                        </div>
+                    </div>
+
+                    <div class="lg:col-span-2 bg-white rounded-xl p-4 text-eda-900">
+                        <div class="chart-container">
+                            <canvas id="lrChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section> -->
+
+    </main>
+
+    <footer class="bg-white border-t border-eda-200 mt-auto py-8">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <p class="text-eda-500 text-sm">Generated for EDA Education. Based on standard logic synthesis flows (DC/Genus concepts).</p>
+        </div>
+    </footer>
+
+    <!-- JS Logic -->
+    <script>
+        // --- DATA & CONTENT ---
+        const algoData = {
+            resynthesis: {
+                title: "Resynthesis",
+                subtitle: "Peephole Optimization & Exact Synthesis",
+                content: `
+                    <ul class="list-disc pl-5 space-y-2 text-gray-700">
+                        <li><strong>Concept:</strong> Similar to compiler peephole optimization. Focuses on small cones of logic along the critical path.</li>
+                        <li><strong>Strategy:</strong> 
+                            <ol class="list-decimal pl-5 mt-1 space-y-1 text-sm">
+                                <li>Identify <strong>Critical Path</strong> (Red line in visual).</li>
+                                <li>Partition local logic into small <strong>Cuts</strong> (Black dashed lines).</li>
+                                <li>Re-implement these cuts using optimal gate structures (e.g., Exact Synthesis).</li>
+                            </ol>
+                        </li>
+                        <li><strong>Scope:</strong> Limited level depth (3~5 logic levels), usually involving < 100 leaf cells.</li>
+                        <li><strong>Exact Synthesis:</strong> For very small cuts (inputs <= 4), uses truth-tables to find the theoretically optimal circuit.</li>
+                    </ul>
+                `,
+                vizType: 'canvas_resyn'
+            },
+            rule_based: {
+                title: "Rule-based Decomposition",
+                subtitle: "Splitting & Merging Cells",
+                content: `
+                    <ul class="list-disc pl-5 space-y-2 text-gray-700">
+                        <li><strong>Pattern Matching:</strong> Commercial tools accumulate heuristic rules for specific technology libraries.</li>
+                        <li><strong>Decomposition:</strong> Splitting complex standard cells into multiple simpler cells to improve timing (break dependency chains).</li>
+                        <li><strong>Fusion:</strong> Merging multiple simple cells into a complex cell to save area (if timing allows).</li>
+                        <li><strong>Implementation:</strong> Fast pattern match or hardcoded rewrites.</li>
+                    </ul>
+                `,
+                vizType: 'canvas_split' 
+            },
+            pin_swap: {
+                title: "Pin Swap",
+                subtitle: "Latency Reduction via Input Reordering",
+                content: `
+                    <ul class="list-disc pl-5 space-y-2 text-gray-700">
+                        <li><strong>Applicability:</strong> Technology dependent & independent optimization.</li>
+                        <li><strong>Logic:</strong> Swapping two logically equivalent input pins (e.g., inputs to an AND gate).</li>
+                        <li><strong>Physics:</strong> Different input pins of a physical cell have different internal delays. Connecting the critical path signal to the faster pin reduces overall delay.</li>
+                    </ul>
+                    <div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+                        Click the <strong>Swap Pins</strong> button to optimize the arrival time.
+                    </div>
+                `,
+                vizType: 'interactive_swap'
+            },
+            buffering: {
+                title: "Buffering / Rebuffering",
+                subtitle: "Handling High-Fanout Nets",
+                content: `
+                    <ul class="list-disc pl-5 space-y-2 text-gray-700">
+                        <li><strong>Problem:</strong> High fanout (>1000 sinks) causes massive capacitive load, degrading transition time and delay.</li>
+                        <li><strong>Solution 1 (Grouping):</strong> Simple clustering to build a buffer tree.</li>
+                        <li><strong>Solution 2 (Critical Path):</strong> DP (Dynamic Programming) based buffering for precise timing control on critical paths.</li>
+                    </ul>
+                `,
+                vizType: 'canvas_buffer'
+            },
+            gate_sizing: {
+                title: "Gate Sizing",
+                subtitle: "Timing-Area Trade-off & MVT",
+                content: `
+                    <ul class="list-disc pl-5 space-y-2 text-gray-700">
+                        <li><strong>Concept:</strong> Changing the drive strength (size) of a cell (e.g., AND2_X1 → AND2_X4).</li>
+                        <li><strong>Modern Challenge:</strong> MVT (Multi-Voltage Threshold) cells (LVT, RVT, HVT) expand the search space significantly.</li>
+                        <li><strong>Trade-off:</strong> Larger cells/LVT = Faster but more leakage/area. Smaller cells/HVT = Slower but less power/area.</li>
+                    </ul>
+                `,
+                vizType: 'chart_sizing'
+            }
+        };
+
+        let currentChart = null;
+
+        // --- DATAPATH OPTIMIZATION (Operator Selection) ---
+
+        const ADDER_TYPES = {
+            'Ripple': { name: 'Ripple Carry', delay: 10, area: 10, colorClass: 'bg-blue-50 border-blue-500 text-blue-700', activeClass: 'ring-blue-300' },
+            'BK': { name: 'Brent-Kung', delay: 6, area: 20, colorClass: 'bg-teal-50 border-teal-500 text-teal-700', activeClass: 'ring-teal-300' },
+            'KS': { name: 'Kogge-Stone', delay: 4, area: 30, colorClass: 'bg-rose-50 border-rose-500 text-rose-700', activeClass: 'ring-rose-300' }
+        };
+
+        const circuitData = {
+            paths: [
+                { id: 'p1', name: 'Path A (Complex)', nodeIds: [0, 1, 2, 3] },
+                { id: 'p2', name: 'Path B (Medium)', nodeIds: [4, 5, 6] },
+                { id: 'p3', name: 'Path C (Simple)', nodeIds: [7, 8] }
+            ],
+            nodes: [
+                { id: 0, type: 'Ripple', label: 'ADD_1' },
+                { id: 1, type: 'Ripple', label: 'ADD_2' },
+                { id: 2, type: 'Ripple', label: 'ADD_3' },
+                { id: 3, type: 'Ripple', label: 'ADD_4' },
+                { id: 4, type: 'Ripple', label: 'ADD_5' },
+                { id: 5, type: 'Ripple', label: 'ADD_6' },
+                { id: 6, type: 'Ripple', label: 'ADD_7' },
+                { id: 7, type: 'Ripple', label: 'ADD_8' },
+                { id: 8, type: 'Ripple', label: 'ADD_9' }
+            ]
+        };
+
+        let selectedNodeId = null;
+        let chartInstance = null;
+
+        function calculateStats() {
+            let totalArea = 0;
+            const pathDelays = [];
+            let maxDelay = 0;
+            let criticalPathIndex = -1;
+
+            circuitData.paths.forEach((path, index) => {
+                let currentPathDelay = 0;
+                path.nodeIds.forEach(nodeId => {
+                    const node = circuitData.nodes[nodeId];
+                    const specs = ADDER_TYPES[node.type];
+                    currentPathDelay += specs.delay;
+                    totalArea += specs.area;
+                });
+
+                pathDelays.push({
+                    name: path.name,
+                    delay: currentPathDelay,
+                    id: path.id
+                });
+
+                if (currentPathDelay > maxDelay) {
+                    maxDelay = currentPathDelay;
+                    criticalPathIndex = index;
+                }
+            });
+
+            return { totalArea, pathDelays, maxDelay, criticalPathIndex };
+        }
+
+        function renderCircuit() {
+            const container = document.getElementById('circuit-container');
+            if (!container) return;
+            container.innerHTML = '';
+            
+            const stats = calculateStats();
+            
+            circuitData.paths.forEach((path, pathIndex) => {
+                const isCritical = (pathIndex === stats.criticalPathIndex);
+                
+                const row = document.createElement('div');
+                row.className = `flex items-center space-x-2 p-4 rounded-lg transition-colors ${isCritical ? 'bg-red-50 border border-red-100' : 'hover:bg-stone-50'}`;
+                
+                const label = document.createElement('div');
+                label.className = `w-24 flex-shrink-0 font-bold text-sm ${isCritical ? 'text-red-600' : 'text-stone-500'}`;
+                label.innerText = path.name;
+                row.appendChild(label);
+
+                const start = document.createElement('div');
+                start.innerHTML = 'IN <span class="text-stone-300">→</span>';
+                start.className = "text-xs font-mono text-stone-400 mr-2";
+                row.appendChild(start);
+
+                path.nodeIds.forEach((nodeId, idx) => {
+                    const node = circuitData.nodes[nodeId];
+                    const specs = ADDER_TYPES[node.type];
+                    
+                    const nodeEl = document.createElement('div');
+                    nodeEl.className = `
+                        w-20 h-20 sm:w-24 sm:h-24 flex flex-col items-center justify-center 
+                        border-2 rounded-lg cursor-pointer node-transition shadow-sm select-none relative
+                        ${specs.colorClass} 
+                        ${selectedNodeId === nodeId ? 'ring-4 ring-offset-2 ' + specs.activeClass : 'hover:shadow-md'}
+                    `;
+                    nodeEl.onclick = () => selectNode(nodeId);
+
+                    nodeEl.innerHTML = `
+                        <span class="text-xs font-mono opacity-70 mb-1">${node.label}</span>
+                        <span class="font-bold text-sm sm:text-base leading-none text-center">${specs.name.split(' ')[0]}</span>
+                        <span class="text-[10px] mt-1 bg-white/50 px-1 rounded">${specs.delay}ns</span>
+                    `;
+
+                    row.appendChild(nodeEl);
+
+                    if (idx < path.nodeIds.length - 1) {
+                        const arrow = document.createElement('div');
+                        arrow.className = "text-stone-300 font-bold";
+                        arrow.innerText = "→";
+                        row.appendChild(arrow);
+                    }
+                });
+
+                const endArrow = document.createElement('div');
+                endArrow.className = "text-stone-300 font-bold flex-grow text-center";
+                endArrow.innerText = "--------→";
+                row.appendChild(endArrow);
+
+                const result = document.createElement('div');
+                result.className = `w-24 flex-shrink-0 text-right font-mono font-bold text-lg ${isCritical ? 'text-red-600' : 'text-stone-600'}`;
+                result.innerText = stats.pathDelays[pathIndex].delay + 'ns';
+                row.appendChild(result);
+
+                container.appendChild(row);
+            });
+
+            updateDashboard(stats);
+        }
+
+        function selectNode(id) {
+            selectedNodeId = id;
+            renderCircuit();
+            
+            const node = circuitData.nodes[id];
+            const specs = ADDER_TYPES[node.type];
+            
+            const panel = document.getElementById('node-detail-panel');
+            if (panel) {
+                panel.classList.remove('hidden');
+            }
+            
+            const title = document.getElementById('detail-title');
+            const desc = document.getElementById('detail-desc');
+            const delay = document.getElementById('detail-delay');
+            if (title) title.innerText = `${node.label} (${specs.name})`;
+            if (desc) desc.innerText = `Selected node. Use the buttons below to change structure.`;
+            if (delay) delay.innerText = `${specs.delay}ns`;
+        }
+
+        function updateSelectedNode(newType) {
+            if (selectedNodeId === null) return;
+            circuitData.nodes[selectedNodeId].type = newType;
+            renderCircuit();
+            
+            const node = circuitData.nodes[selectedNodeId];
+            const specs = ADDER_TYPES[node.type];
+            const title = document.getElementById('detail-title');
+            const delay = document.getElementById('detail-delay');
+            if (title) title.innerText = `${node.label} (${specs.name})`;
+            if (delay) delay.innerText = `${specs.delay}ns`;
+        }
+
+        function updateDashboard(stats) {
+            const maxDelay = document.getElementById('stat-max-delay');
+            const totalArea = document.getElementById('stat-total-area');
+            const criticalPath = document.getElementById('stat-critical-path-name');
+            const headerStatus = document.getElementById('header-status');
+            if (maxDelay) maxDelay.innerText = stats.maxDelay;
+            if (totalArea) totalArea.innerText = stats.totalArea;
+            if (criticalPath) criticalPath.innerText = `Bottleneck: ${stats.pathDelays[stats.criticalPathIndex].name}`;
+            if (headerStatus) headerStatus.innerText = `${stats.pathDelays[stats.criticalPathIndex].name} is critical`;
+
+            updateChart(stats);
+        }
+
+        function initChart() {
+            const canvas = document.getElementById('delayChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            
+            chartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Path delay (ns)',
+                        data: [],
+                        backgroundColor: [],
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Delay (ns)' }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.raw + ' ns';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart(stats) {
+            if (!chartInstance) return;
+
+            const labels = stats.pathDelays.map(p => p.name);
+            const data = stats.pathDelays.map(p => p.delay);
+            
+            const bgColors = stats.pathDelays.map((p, idx) => 
+                idx === stats.criticalPathIndex ? 'rgba(239, 68, 68, 0.8)' : 'rgba(120, 113, 108, 0.3)'
+            );
+
+            chartInstance.data.labels = labels;
+            chartInstance.data.datasets[0].data = data;
+            chartInstance.data.datasets[0].backgroundColor = bgColors;
+            chartInstance.update();
+        }
+
+        function initDatapathOptimization() {
+            initChart();
+            renderCircuit();
+        }
+
+        // --- FLOW DIAGRAM (Canvas) ---
+        function drawRoundedRect(ctx, x, y, w, h, r) {
+            const radius = Math.min(r, w / 2, h / 2);
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + w - radius, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+            ctx.lineTo(x + w, y + h - radius);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+            ctx.lineTo(x + radius, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+        }
+
+        function drawArrow(ctx, x1, y1, x2, y2, color) {
+            const headLength = 10;
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x2, y2);
+            ctx.lineTo(x2 - headLength * Math.cos(angle - Math.PI / 6), y2 - headLength * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(x2 - headLength * Math.cos(angle + Math.PI / 6), y2 - headLength * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+            const words = text.split(' ');
+            const lines = [];
+            let line = '';
+            words.forEach((word) => {
+                const test = line ? `${line} ${word}` : word;
+                if (ctx.measureText(test).width <= maxWidth) {
+                    line = test;
+                } else {
+                    lines.push(line);
+                    line = word;
+                }
+            });
+            if (line) lines.push(line);
+            const totalHeight = lines.length * lineHeight;
+            let startY = y - totalHeight / 2 + lineHeight / 2;
+            lines.forEach((l) => {
+                ctx.fillText(l, x, startY);
+                startY += lineHeight;
+            });
+        }
+
+        function drawFlowDiagram() {
+            const canvas = document.getElementById('flowDiagramCanvas');
+            if (!canvas) return;
+
+            const containerWidth = canvas.parentElement.clientWidth - 4;
+            const baseWidth = 1200;
+            const baseHeight = 520;
+            const scale = Math.min(containerWidth / baseWidth, 1);
+            const width = Math.max(640, Math.floor(baseWidth * scale));
+            const height = Math.floor(baseHeight * (width / baseWidth));
+            const dpr = window.devicePixelRatio || 1;
+
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            canvas.style.width = `${width}px`;
+            canvas.style.height = `${height}px`;
+
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(dpr * (width / baseWidth), dpr * (height / baseHeight));
+
+            // Colors
+            const palette = {
+                band: '#faefd1',
+                bandBorder: '#f1d9a5',
+                blue: '#3b6cc6',
+                arrow: '#6b8ed6',
+                text: '#0f172a',
+                title: '#8a3551',
+                yellow: '#f4b400',
+                yellowBorder: '#d79a00'
+            };
+
+            // Background
+            ctx.clearRect(0, 0, baseWidth, baseHeight);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, baseWidth, baseHeight);
+
+            // Top band
+            drawRoundedRect(ctx, 20, 20, 1160, 190, 12);
+            ctx.fillStyle = palette.band;
+            ctx.fill();
+            ctx.strokeStyle = palette.bandBorder;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Title
+            ctx.fillStyle = palette.title;
+            ctx.font = '28px Inter, system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Translation of High-Level Design into GTECH Netlist', 600, 50);
+
+            // Top row boxes
+            const topY = 90;
+            const boxW = 220;
+            const boxH = 110;
+            const gap = 30;
+            const startX = 60;
+            const topBoxes = [
+                { text: 'High-level & datapath optimization', fill: '#ffffff', stroke: palette.blue },
+                { text: 'Multiplexer optimization & mapping', fill: '#ffffff', stroke: palette.blue },
+                { text: 'Sequential mapping', fill: '#ffffff', stroke: palette.blue },
+                { text: 'Technology-independent logic optimization', fill: palette.yellow, stroke: palette.yellowBorder }
+            ];
+
+            topBoxes.forEach((box, i) => {
+                const x = startX + i * (boxW + gap);
+                drawRoundedRect(ctx, x, topY, boxW, boxH, 18);
+                ctx.fillStyle = box.fill;
+                ctx.fill();
+                ctx.strokeStyle = box.stroke;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.fillStyle = palette.text;
+                ctx.font = '18px Inter, system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                wrapText(ctx, box.text, x + boxW / 2, topY + boxH / 2, boxW - 20, 20);
+
+                if (i < topBoxes.length - 1) {
+                    const x1 = x + boxW;
+                    const y1 = topY + boxH / 2;
+                    const x2 = x1 + gap;
+                    const y2 = y1;
+                    drawArrow(ctx, x1 + 6, y1, x2 - 6, y2, palette.arrow);
+                }
+            });
+
+            // Bottom band
+            const bottomBand = { x: 120, y: 240, w: 960, h: 210 };
+            drawRoundedRect(ctx, bottomBand.x, bottomBand.y, bottomBand.w, bottomBand.h, 12);
+            ctx.fillStyle = palette.band;
+            ctx.fill();
+            ctx.strokeStyle = palette.bandBorder;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Bottom left yellow box
+            const bottomLeft = { x: 60, y: 290, w: 220, h: 110 };
+            drawRoundedRect(ctx, bottomLeft.x, bottomLeft.y, bottomLeft.w, bottomLeft.h, 18);
+            ctx.fillStyle = palette.yellow;
+            ctx.fill();
+            ctx.strokeStyle = palette.yellowBorder;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.fillStyle = palette.text;
+            ctx.font = '20px Inter, system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            wrapText(ctx, 'Technology mapping', bottomLeft.x + bottomLeft.w / 2, bottomLeft.y + bottomLeft.h / 2, bottomLeft.w - 20, 22);
+
+            // Arrow from top right to bottom left (L-shaped)
+            const topRightCenterX = startX + 3 * (boxW + gap) + boxW / 2;
+            const topRightBottomY = topY + boxH;
+            const midY = bottomLeft.y - 20;
+            ctx.strokeStyle = palette.arrow;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(topRightCenterX, topRightBottomY);
+            ctx.lineTo(topRightCenterX, midY);
+            ctx.lineTo(bottomLeft.x + bottomLeft.w / 2, midY);
+            ctx.lineTo(bottomLeft.x + bottomLeft.w / 2, bottomLeft.y);
+            ctx.stroke();
+            drawArrow(ctx, bottomLeft.x + bottomLeft.w / 2, bottomLeft.y - 4, bottomLeft.x + bottomLeft.w / 2, bottomLeft.y + 2, palette.arrow);
+
+            // Bottom row boxes inside band
+            const bottomY = bottomLeft.y;
+            const bottomBoxW = 240;
+            const bottomGap = 24;
+            const bottomStartX = bottomLeft.x + bottomLeft.w + 30;
+            const bottomBoxes = [
+                { text: 'Timing analysis & optimization (buffering/gate sizing/pin sweeping)' },
+                { text: 'Register retiming' },
+                { text: 'Leakage, power, and area optimization' }
+            ];
+
+            bottomBoxes.forEach((box, i) => {
+                const x = bottomStartX + i * (bottomBoxW + bottomGap);
+                drawRoundedRect(ctx, x, bottomY, bottomBoxW, boxH, 18);
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+                ctx.strokeStyle = palette.blue;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.fillStyle = palette.text;
+                ctx.font = '17px Inter, system-ui, sans-serif';
+                wrapText(ctx, box.text, x + bottomBoxW / 2, bottomY + boxH / 2, bottomBoxW - 20, 19);
+
+                if (i < bottomBoxes.length - 1) {
+                    const x1 = x + bottomBoxW;
+                    const y1 = bottomY + boxH / 2;
+                    const x2 = x1 + bottomGap;
+                    const y2 = y1;
+                    drawArrow(ctx, x1 + 6, y1, x2 - 6, y2, palette.arrow);
+                }
+            });
+
+            // Arrow from technology mapping to first bottom box
+            drawArrow(ctx, bottomLeft.x + bottomLeft.w + 6, bottomLeft.y + bottomLeft.h / 2, bottomStartX - 6, bottomY + boxH / 2, palette.arrow);
+
+            // Bottom band label
+            ctx.fillStyle = palette.title;
+            ctx.font = '24px Inter, system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Post Optimization of Netlist', bottomBand.x + bottomBand.w / 2, bottomBand.y + bottomBand.h - 25);
+
+            // Courtesy
+            ctx.fillStyle = '#1f2a44';
+            ctx.font = '18px Inter, system-ui, sans-serif';
+            ctx.fillText('[Courtesy: Dr. Yu Huang, HiSilicon]', 600, 500);
+        }
+
+        // --- ALGORITHM EXPLORER ---
+
+        function selectAlgo(key) {
+            document.querySelectorAll('.algo-btn').forEach(btn => {
+                if (btn.dataset.algo === key) {
+                    btn.classList.add('bg-blue-50', 'text-eda-primary', 'border-eda-primary');
+                    btn.classList.remove('bg-white', 'text-gray-700', 'border-gray-200');
+                } else {
+                    btn.classList.remove('bg-blue-50', 'text-eda-primary', 'border-eda-primary');
+                    btn.classList.add('bg-white', 'text-gray-700', 'border-gray-200');
+                }
+            });
+
+            const data = algoData[key];
+            const contentDiv = document.getElementById('algo-content');
+            
+            contentDiv.innerHTML = `
+                <div class="h-full flex flex-col">
+                    <div class="mb-4">
+                        <h3 class="text-2xl font-bold text-eda-dark">${data.title}</h3>
+                        <h4 class="text-md font-medium text-eda-primary">${data.subtitle}</h4>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 flex-grow">
+                        <div class="text-sm leading-relaxed text-gray-600">
+                            ${data.content}
+                        </div>
+                        <div class="bg-gray-50 rounded-lg border border-gray-200 p-4 flex items-center justify-center relative overflow-hidden" id="viz-container">
+                            <!-- Visualizations injected here -->
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const vizContainer = document.getElementById('viz-container');
+            
+            if (data.vizType === 'canvas_resyn') {
+                vizContainer.innerHTML = '<canvas id="resynCanvas" width="400" height="250"></canvas>';
+                renderResynthesisCanvas();
+            } else if (data.vizType === 'chart_sizing') {
+                vizContainer.innerHTML = '<div class="chart-container"><canvas id="sizingChart"></canvas></div>';
+                renderSizingChart();
+            } else if (data.vizType === 'interactive_swap') {
+                renderPinSwap(vizContainer);
+            } else if (data.vizType === 'canvas_buffer') {
+                vizContainer.innerHTML = '<canvas id="bufferCanvas" width="300" height="200"></canvas>';
+                renderBufferTree();
+            } else if (data.vizType === 'canvas_split') {
+                vizContainer.innerHTML = '<canvas id="splitCanvas" width="300" height="200"></canvas>';
+                renderSplitDemo();
+            }
+        }
+
+        function renderResynthesisCanvas() {
+            const canvas = document.getElementById('resynCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            ctx.clearRect(0, 0, w, h);
+
+            ctx.beginPath();
+            ctx.moveTo(80, 150);
+            ctx.bezierCurveTo(60, 100, 100, 50, 150, 60);
+            ctx.bezierCurveTo(200, 40, 300, 50, 320, 120);
+            ctx.bezierCurveTo(360, 180, 280, 230, 200, 220);
+            ctx.bezierCurveTo(120, 240, 60, 200, 80, 150);
+            
+            ctx.fillStyle = '#eff6ff';
+            ctx.fill();
+            ctx.strokeStyle = '#93c5fd';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            ctx.fillStyle = '#64748b';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText("Combinational Logic Cloud", 120, 235);
+
+            ctx.beginPath();
+            ctx.moveTo(85, 140);
+            
+            const pathNodes = [
+                {x: 130, y: 110},
+                {x: 180, y: 140},
+                {x: 230, y: 100},
+                {x: 280, y: 130},
+                {x: 320, y: 120}
+            ];
+            
+            pathNodes.forEach(node => {
+                ctx.lineTo(node.x, node.y);
+            });
+            
+            ctx.strokeStyle = '#dc2626';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            ctx.fillStyle = '#dc2626';
+            pathNodes.forEach(node => {
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            ctx.fillStyle = '#dc2626';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText("Critical Path", 180, 90);
+
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+
+            ctx.beginPath();
+            ctx.moveTo(150, 60);
+            ctx.lineTo(150, 200);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(250, 60);
+            ctx.lineTo(250, 200);
+            ctx.stroke();
+            
+            ctx.setLineDash([]);
+            
+            ctx.fillStyle = '#0f172a';
+            ctx.font = 'italic 11px sans-serif';
+            ctx.fillText("Cut 1", 155, 190);
+            ctx.fillText("Cut 2", 255, 190);
+            
+            ctx.fillStyle = '#64748b';
+            ctx.font = '10px sans-serif';
+            ctx.fillText("Resynthesis Candidates", 165, 50);
+        }
+
+        function renderSizingChart() {
+            const canvas = document.getElementById('sizingChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            
+            const lvt = [{x: 10, y: 15}, {x: 15, y: 10}, {x: 25, y: 5}];
+            const rvt = [{x: 8, y: 20}, {x: 12, y: 14}, {x: 20, y: 8}];
+            const hvt = [{x: 6, y: 25}, {x: 9, y: 18}, {x: 15, y: 12}];
+            
+            if (currentChart) currentChart.destroy();
+
+            currentChart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        { label: 'LVT Cells', data: lvt, backgroundColor: '#dc2626' },
+                        { label: 'RVT Cells', data: rvt, backgroundColor: '#2563eb' },
+                        { label: 'HVT Cells', data: hvt, backgroundColor: '#059669' }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Area / Power' } },
+                        y: { title: { display: true, text: 'Delay (ps)' } }
+                    },
+                    plugins: {
+                        title: { display: true, text: 'Discrete Search Space' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': (' + context.raw.x + ', ' + context.raw.y + ')';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderPinSwap(container) {
+            container.innerHTML = `
+                <div class="flex flex-col items-center w-full">
+                    <div class="relative w-64 h-32 bg-white rounded border border-gray-300 mb-4 p-4 shadow-inner" id="logic-gate-demo">
+                        <div class="absolute right-8 top-8 w-16 h-16 border-2 border-black bg-gray-100 rounded-r-full flex items-center justify-center font-bold">AND</div>
+                        
+                        <div class="absolute left-4 top-8 flex items-center gap-2">
+                            <span class="text-xs font-mono">A (Arr: <span id="time-a" class="font-bold text-red-600">5.0</span>ns)</span>
+                            <div class="w-9 h-0.5 bg-black"></div>
+                        </div>
+                        <div class="absolute left-4 top-20 flex items-center gap-2">
+                            <span class="text-xs font-mono">B (Arr: <span id="time-b" class="font-bold text-green-600">2.0</span>ns)</span>
+                            <div class="w-9 h-0.5 bg-black"></div>
+                        </div>
+                        
+                        <div class="absolute right-0 top-14 w-8 h-0.5 bg-black"></div>
+                        
+                        <div class="absolute right-10 top-2 text-[10px] text-gray-400">Pin A delay: 1.0<br>Pin B delay: 1.2</div>
+                    </div>
+
+                    <div class="flex justify-between items-center w-full px-4">
+                        <div class="text-sm">
+                            Output Arrival: <span id="out-arrival" class="font-bold text-xl text-eda-primary">6.0</span>ns
+                        </div>
+                        <button onclick="swapPins()" class="px-4 py-2 bg-eda-primary text-white rounded shadow hover:bg-blue-700 transition">Swap Pins ↺</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        let isSwapped = false;
+        window.swapPins = function() {
+            isSwapped = !isSwapped;
+            
+            const elTimeA = document.getElementById('time-a');
+            const elTimeB = document.getElementById('time-b');
+            const elOut = document.getElementById('out-arrival');
+
+            if (!elTimeA || !elTimeB || !elOut) return;
+            
+            if (!isSwapped) {
+                elTimeA.innerText = "2.0";
+                elTimeA.className = "font-bold text-green-600";
+                
+                elTimeB.innerText = "5.0";
+                elTimeB.className = "font-bold text-red-600";
+                
+                elOut.innerText = "7.0";
+                elOut.classList.add("text-red-600");
+                elOut.classList.remove("text-green-600");
+            } else {
+                elTimeA.innerText = "5.0";
+                elTimeA.className = "font-bold text-red-600";
+
+                elTimeB.innerText = "2.0";
+                elTimeB.className = "font-bold text-green-600";
+
+                elOut.innerText = "6.0";
+                elOut.classList.remove("text-red-600");
+                elOut.classList.add("text-green-600");
+            }
+        }
+
+        function renderBufferTree() {
+            const canvas = document.getElementById('bufferCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            ctx.clearRect(0, 0, 300, 200);
+            
+            ctx.fillStyle = '#2563eb';
+            ctx.fillRect(20, 90, 20, 20);
+            
+            ctx.fillStyle = '#059669';
+            ctx.beginPath();
+            ctx.moveTo(100, 90);
+            ctx.lineTo(120, 100);
+            ctx.lineTo(100, 110);
+            ctx.fill();
+            
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 2;
+            
+            ctx.beginPath();
+            ctx.moveTo(40, 100);
+            ctx.lineTo(100, 100);
+            ctx.moveTo(120, 100);
+            ctx.lineTo(160, 100);
+            
+            ctx.moveTo(160, 100); ctx.lineTo(160, 50); ctx.lineTo(200, 50);
+            ctx.moveTo(160, 100); ctx.lineTo(160, 150); ctx.lineTo(200, 150);
+            ctx.moveTo(160, 100); ctx.lineTo(200, 100);
+            ctx.stroke();
+            
+            ctx.fillStyle = '#64748b';
+            ctx.fillRect(200, 40, 15, 15);
+            ctx.fillRect(200, 92, 15, 15);
+            ctx.fillRect(200, 142, 15, 15);
+            
+            ctx.fillStyle = '#000';
+            ctx.font = '10px sans-serif';
+            ctx.fillText("Source", 15, 85);
+            ctx.fillText("Buffer", 90, 85);
+            ctx.fillText("Sinks", 200, 35);
+        }
+
+        function renderSplitDemo() {
+            const canvas = document.getElementById('splitCanvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, 300, 200);
+
+            ctx.strokeStyle = '#dc2626';
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(50, 50, 60, 100);
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#dc2626';
+            ctx.fillText("Complex", 55, 45);
+
+            ctx.fillStyle = '#dbeafe';
+            ctx.strokeStyle = '#2563eb';
+            ctx.fillRect(60, 60, 40, 30);
+            ctx.strokeRect(60, 60, 40, 30);
+            
+            ctx.fillRect(60, 110, 40, 30);
+            ctx.strokeRect(60, 110, 40, 30);
+            
+            ctx.fillStyle = '#64748b';
+            ctx.font = '20px sans-serif';
+            ctx.fillText("→", 130, 110);
+            
+            ctx.fillStyle = '#dbeafe';
+            ctx.fillRect(180, 50, 40, 30);
+            ctx.strokeRect(180, 50, 40, 30);
+            
+            ctx.fillRect(220, 120, 40, 30);
+            ctx.strokeRect(220, 120, 40, 30);
+            
+            ctx.beginPath();
+            ctx.moveTo(200, 80);
+            ctx.lineTo(200, 100);
+            ctx.lineTo(220, 100);
+            ctx.stroke();
+            
+            ctx.fillStyle = '#000';
+            ctx.font = '10px sans-serif';
+            ctx.fillText("Split to break timing", 170, 170);
+        }
+
+        function scrollToSection(id) {
+            document.getElementById(id).scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // --- LAGRANGIAN RELAXATION SIMULATION (Chart.js) ---
+
+        let lrChart;
+        
+        // Mathematical Model: Cost = K / (Delay) (Simplified convex curve)
+        // Area(d) = 10 / d  (Hyperbola)
+        const generateCurveData = () => {
+            const data = [];
+            for(let d = 0.5; d <= 10; d += 0.1) {
+                data.push({ x: d, y: 10/d });
+            }
+            return data;
+        };
+
+        const curveData = generateCurveData();
+
+        function initLRChart() {
+            const ctx = document.getElementById('lrChart').getContext('2d');
+            
+            lrChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Area vs Delay Curve',
+                            data: curveData,
+                            borderColor: '#4f46e5', // Indigo
+                            backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            order: 2
+                        },
+                        {
+                            label: 'Cost Gradient (-λ)',
+                            data: [], // Dynamic tangent line
+                            borderColor: '#ef4444', // Red
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            pointRadius: 0,
+                            order: 3
+                        },
+                        {
+                            label: 'Optimal Solution',
+                            data: [], // Single point
+                            backgroundColor: '#ef4444',
+                            borderColor: '#fff',
+                            borderWidth: 3,
+                            pointRadius: 8,
+                            type: 'scatter',
+                            order: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: { display: true, text: 'Delay (ns)' },
+                            min: 0,
+                            max: 10
+                        },
+                        y: {
+                            title: { display: true, text: 'Area (um²)' },
+                            min: 0,
+                            max: 20
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `(${context.parsed.x.toFixed(2)}, ${context.parsed.y.toFixed(2)})`;
+                                }
+                            }
+                        },
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+            
+            updateSimulation(1.0);
+        }
+
+        function updateSimulation(lambda) {
+            // 1. Math: Minimize Area + Lambda * Delay
+            // Curve: A = 10/D
+            // Cost = 10/D + L*D
+            // Derivative dCost/dD = -10/D^2 + L = 0  =>  D^2 = 10/L  => D = sqrt(10/L)
+            
+            const optimalDelay = Math.sqrt(10 / lambda);
+            const optimalArea = 10 / optimalDelay;
+            const optimalCost = optimalArea + lambda * optimalDelay;
+
+            // 2. Generate Tangent Line (Slope = -lambda) passing through optimal point
+            // y - y1 = m(x - x1) => y = -lambda(x - optimalDelay) + optimalArea
+            const tangentData = [];
+            const xStart = Math.max(0.5, optimalDelay - 2);
+            const xEnd = Math.min(10, optimalDelay + 2);
+            
+            tangentData.push({ x: xStart, y: -lambda * (xStart - optimalDelay) + optimalArea });
+            tangentData.push({ x: xEnd, y: -lambda * (xEnd - optimalDelay) + optimalArea });
+
+            // 3. Update DOM
+            document.getElementById('lambdaValue').textContent = lambda.toFixed(1);
+            document.getElementById('currentDelay').textContent = optimalDelay.toFixed(2) + ' ns';
+            document.getElementById('currentArea').textContent = optimalArea.toFixed(2) + ' um²';
+            document.getElementById('currentCost').textContent = optimalCost.toFixed(2);
+
+            // 4. Update Chart
+            lrChart.data.datasets[1].data = tangentData;
+            lrChart.data.datasets[2].data = [{ x: optimalDelay, y: optimalArea }];
+            lrChart.update();
+        }
+
+        function renderModernChart() {
+            const canvas = document.getElementById('modernChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [0, 1, 2, 3, 4, 5, 6],
+                    datasets: [
+                        {
+                            label: 'Discrete Cost',
+                            data: [10, 8, 4, 5, 3, 7, 10],
+                            borderColor: 'rgba(255, 99, 132, 0.5)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                            showLine: false,
+                            pointRadius: 5,
+                            type: 'scatter'
+                        },
+                        {
+                            label: 'Differentiable Approx.',
+                            data: [10, 7.5, 4.2, 3.8, 3.2, 6, 9.5],
+                            borderColor: '#4ade80',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false }
+                    }
+                }
+            });
+        }
+
+        // --- EVENT LISTENERS ---
+        document.addEventListener('DOMContentLoaded', () => {
+            drawFlowDiagram();
+            initDatapathOptimization();
+            selectAlgo('resynthesis');
+            initLRChart();
+            renderModernChart();
+
+            const slider = document.getElementById('lambdaSlider');
+            slider.addEventListener('input', (e) => {
+                updateSimulation(parseFloat(e.target.value));
+            });
+        });
+
+        let flowResizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(flowResizeTimer);
+            flowResizeTimer = setTimeout(drawFlowDiagram, 120);
+        });
+
+    </script>
+</body>
+</html>
